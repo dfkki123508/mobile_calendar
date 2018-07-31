@@ -11,7 +11,10 @@ dependencies:
   flutter_calendar: ^0.0.4
   scrolling_calendar: ^0.2.11
   uuid: 1.0.0
-  material_pickers: ^0.0.2
+#  material_pickers: ^0.0.2
+  objectdb: ^0.1.10
+  path_provider: ^0.4.1
+
 
 dev_dependencies:
   flutter_test:

@@ -1,6 +1,12 @@
 import 'dart:math';
+import 'dart:io';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:scrolling_calendar/scrolling_calendar.dart';
+import 'package:objectdb/objectdb.dart';
+import 'package:path_provider/path_provider.dart';
+
 import './src/base/base_classes.dart';
 import './src/pages/event_type_dialog.dart';
 import './src/pages/event_page.dart';
@@ -26,8 +32,9 @@ class MyCalendar extends StatefulWidget {
 class _MyCalendarState extends State<MyCalendar> {
   static final Random random = Random();
 
+  EventType _selectedEventType;
+  ObjectDB _db;
   var _scrollingCalendar;
-  var _selectedEventType;
   var _sEventTypes = Set<EventType>();
   var _sDateTimeEvents = Map<DateTime, Set<Event>>();
 
@@ -36,9 +43,142 @@ class _MyCalendarState extends State<MyCalendar> {
     print("Init state " + getCurrentDate().toString());
     super.initState();
 
-    _sEventTypes.add(EventType("Default", Colors.grey, Icons.date_range));
+    // load db state
+    _loadStateFromDB().then((f) {
+      _selectedEventType =
+          _sEventTypes.where((e) => (e.name == "Default")).first;
+      setState((){});
+    });
+  }
 
-    _selectedEventType = _sEventTypes.first;
+  Future<String> get _localPath async {
+    final directory = await getApplicationDocumentsDirectory();
+    if (!(await Directory(directory.path).exists())) {
+      Directory(directory.path).createSync(recursive: true);
+    }
+    return directory.path + "/mobile_calender.db";
+    ;
+  }
+
+  Future _loadStateFromDB() async {
+    print("Loading state from DB...");
+
+    var dbPath = await _localPath;
+    print(dbPath);
+
+    if (_db == null) _db = ObjectDB(dbPath);
+    _db.open();
+
+    _sEventTypes = (await _db.find({'classtype': 'EventType'}))
+        .map((l) => (EventType.fromMap(l)))
+        .toSet();
+
+    if (_sEventTypes.isEmpty) {
+      _sEventTypes.add(
+          EventType("Default", Colors.grey.withOpacity(1.0), Icons.date_range));
+      await _saveEventTypesToDB();
+    }
+
+    var storedEvents = (await _db.find({'classtype': 'Event'}))
+        .map((l) => (Event.fromMap(l, _sEventTypes)));
+
+    for (var e in storedEvents) {
+      var day = getDate(e.start);
+      _sDateTimeEvents.putIfAbsent(day, () => Set<Event>());
+      _sDateTimeEvents[day].add(e);
+    }
+
+    print("Loaded event types: $_sEventTypes");
+    print("Loaded events: $_sDateTimeEvents");
+
+    await _db.close();
+    return null;
+  }
+
+  _saveStateToDB() async {
+    print("Saving state in DB...");
+
+    var dbPath = await _localPath;
+    print(dbPath);
+
+    if (_db == null) _db = ObjectDB(dbPath);
+    _db.open();
+
+    // save event types
+    var storedEventTypes =
+        (await _db.find({'classtype': 'EventType'})).map((l) {
+      return l['name'];
+    });
+    print("Stored event types: $storedEventTypes");
+    for (var e in _sEventTypes) {
+      if (!storedEventTypes.contains(e.name)) {
+        _db.insert(e.toMap());
+      }
+    }
+
+    // save events
+    var storedEvents = (await _db.find({'classtype': 'Event'})).map((l) {
+      return l['uuid'];
+    });
+    print("Stored events: $storedEvents");
+    _sDateTimeEvents.forEach((d, events) {
+      for (var e in events) {
+        if (!storedEvents.contains(e.uuid)) {
+          _db.insert(e.toMap());
+        }
+      }
+    });
+
+    await _db.close();
+  }
+
+  _saveEventTypesToDB() async {
+    print("Saving event types in DB...");
+
+    var dbPath = await _localPath;
+    print(dbPath);
+
+    if (_db == null) _db = ObjectDB(dbPath);
+    _db.open();
+
+    // save event types
+    var storedEventTypes =
+        (await _db.find({'classtype': 'EventType'})).map((l) {
+      return l['name'];
+    });
+    print("Stored event types: $storedEventTypes");
+    for (var e in _sEventTypes) {
+      if (!storedEventTypes.contains(e.name)) {
+        _db.insert(e.toMap());
+      }
+    }
+
+    await _db.close();
+  }
+
+  _saveEventsToDB() async {
+    print("Saving events in DB...");
+
+    var dbPath = await _localPath;
+    print(dbPath);
+
+    if (_db == null) _db = ObjectDB(dbPath);
+    _db.open();
+
+    // save events
+    var storedEvents = (await _db.find({'classtype': 'Event'})).map((l) {
+      return l['uuid'];
+    });
+    print("Stored events: $storedEvents");
+    _sDateTimeEvents.forEach((d, events) {
+      for (var e in events) {
+        if (!storedEvents.contains(e.uuid)) {
+          _db.insert(e.toMap());
+        }
+      }
+    });
+
+    await _db.close();
   }
 
   Iterable<Color> _getMarkers(DateTime day) {
@@ -130,8 +270,6 @@ class _MyCalendarState extends State<MyCalendar> {
     var event = Event("{$_selectedEventType.name} $day", _selectedEventType,
         day, day.add(Duration(minutes: 30)));
 
-    print("Add $event");
-
     _saveEvent(event, day);
   }
 
@@ -141,12 +279,16 @@ class _MyCalendarState extends State<MyCalendar> {
 
     setState(() {
       if (!alreadySaved) {
+        print("Add $event");
         _sDateTimeEvents.putIfAbsent(day, () => Set<Event>());
         _sDateTimeEvents[day].add(event);
       } else if (_sDateTimeEvents.containsKey(day)) {
+        print("Remove $event");
         _sDateTimeEvents[day].remove(event);
       }
     });
+
+    _saveEventsToDB();
   }
 
   _createNewEvent() {
@@ -178,6 +320,9 @@ class _MyCalendarState extends State<MyCalendar> {
       _sEventTypes.add(eventType);
       _selectedEventType = eventType;
     });
+
+    _saveEventTypesToDB();
+
     Navigator.of(context).pop();
   }
 
